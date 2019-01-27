@@ -43,7 +43,7 @@ import bpy_extras
 from bpy_extras import node_shader_utils
 from mathutils import Vector, Matrix
 
-from . import encode_bin, data_types, fbx_utils
+from . import encode_bin, data_types, fbx_utils, walk_shader_node
 from .fbx_utils import (
     # Constants.
     FBX_VERSION, FBX_HEADER_VERSION, FBX_SCENEINFO_VERSION, FBX_TEMPLATES_VERSION,
@@ -1304,20 +1304,20 @@ def fbx_data_texture_file_elements(root, blender_tex_key, scene_data):
     #     Textures do not seem to use properties as much as they could.
     #     For now assuming most logical and simple stuff.
 
-    ma, sock_name = blender_tex_key
+    ma, tex_name = blender_tex_key
     ma_wrap = node_shader_utils.PrincipledBSDFWrapper(ma, is_readonly=True)
     tex_key, _fbx_prop = scene_data.data_textures[blender_tex_key]
-    tex = getattr(ma_wrap, sock_name)
+    tex = ma.node_tree.nodes[tex_name]
     img = tex.image
     fname_abs, fname_rel = _gen_vid_path(img, scene_data)
 
     fbx_tex = elem_data_single_int64(root, b"Texture", get_fbx_uuid_from_key(tex_key))
-    fbx_tex.add_string(fbx_name_class(sock_name.encode(), b"Texture"))
+    fbx_tex.add_string(fbx_name_class(tex_name.encode(), b"Texture"))
     fbx_tex.add_string(b"")
 
     elem_data_single_string(fbx_tex, b"Type", b"TextureVideoClip")
     elem_data_single_int32(fbx_tex, b"Version", FBX_TEXTURE_VERSION)
-    elem_data_single_string(fbx_tex, b"TextureName", fbx_name_class(sock_name.encode(), b"Texture"))
+    elem_data_single_string(fbx_tex, b"TextureName", fbx_name_class(tex_name.encode(), b"Texture"))
     elem_data_single_string(fbx_tex, b"Media", fbx_name_class(img.name.encode(), b"Video"))
     elem_data_single_string_unicode(fbx_tex, b"FileName", fname_abs)
     elem_data_single_string_unicode(fbx_tex, b"RelativeFilename", fname_rel)
@@ -1332,20 +1332,21 @@ def fbx_data_texture_file_elements(root, blender_tex_key, scene_data):
     # BlendMode not useful for now, only affects layered textures afaics.
     mapping = 0  # UV.
     uvset = None
-    if tex.texcoords == 'ORCO':  # XXX Others?
-        if tex.projection == 'FLAT':
-            mapping = 1  # Planar
-        elif tex.projection == 'CUBE':
-            mapping = 4  # Box
-        elif tex.projection == 'TUBE':
-            mapping = 3  # Cylindrical
-        elif tex.projection == 'SPHERE':
-            mapping = 2  # Spherical
-    elif tex.texcoords == 'UV':
-        mapping = 0  # UV
-        # Yuck, UVs are linked by mere names it seems... :/
-        # XXX TODO how to get that now???
-        # uvset = tex.uv_layer
+    if hasattr(tex, "translation"):
+        if tex.texcoords == 'ORCO':  # XXX Others?
+            if tex.projection == 'FLAT':
+                mapping = 1  # Planar
+            elif tex.projection == 'CUBE':
+                mapping = 4  # Box
+            elif tex.projection == 'TUBE':
+                mapping = 3  # Cylindrical
+            elif tex.projection == 'SPHERE':
+                mapping = 2  # Spherical
+        elif tex.texcoords == 'UV':
+            mapping = 0  # UV
+            # Yuck, UVs are linked by mere names it seems... :/
+            # XXX TODO how to get that now???
+            # uvset = tex.uv_layer
     wrap_mode = 1  # Clamp
     if tex.extension == 'REPEAT':
         wrap_mode = 0  # Repeat
@@ -1360,9 +1361,12 @@ def fbx_data_texture_file_elements(root, blender_tex_key, scene_data):
         elem_props_template_set(tmpl, props, "p_string", b"UVSet", uvset)
     elem_props_template_set(tmpl, props, "p_enum", b"WrapModeU", wrap_mode)
     elem_props_template_set(tmpl, props, "p_enum", b"WrapModeV", wrap_mode)
-    elem_props_template_set(tmpl, props, "p_vector_3d", b"Translation", tex.translation)
-    elem_props_template_set(tmpl, props, "p_vector_3d", b"Rotation", (-r for r in tex.rotation))
-    elem_props_template_set(tmpl, props, "p_vector_3d", b"Scaling", (((1.0 / s) if s != 0.0 else 1.0) for s in tex.scale))
+    if hasattr(tex, "translation"):
+        elem_props_template_set(tmpl, props, "p_vector_3d", b"Translation", tex.translation)
+    if hasattr(tex, "rotation"):
+        elem_props_template_set(tmpl, props, "p_vector_3d", b"Rotation", (-r for r in tex.rotation))
+    if hasattr(tex, "scale"):
+        elem_props_template_set(tmpl, props, "p_vector_3d", b"Scaling", (((1.0 / s) if s != 0.0 else 1.0) for s in tex.scale))
     # UseMaterial should always be ON imho.
     elem_props_template_set(tmpl, props, "p_bool", b"UseMaterial", True)
     elem_props_template_set(tmpl, props, "p_bool", b"UseMipMap", False)
@@ -2319,6 +2323,24 @@ def fbx_data_from_scene(scene, depsgraph, settings):
     data_videos = {}
     # For now, do not use world textures, don't think they can be linked to anything FBX wise...
     for ma in data_materials.keys():
+        textures = []
+        def get_texture_image(node):
+            if isinstance(node, bpy.types.ShaderNodeTexImage) and node.image is not None:
+                textures.append(node)
+
+        if ma.node_tree is None:
+            continue
+        walk_shader_node.walk_group(ma.node_tree, get_texture_image)
+        for tex in textures:
+            if tex is None or tex.image is None:
+                continue
+            blender_tex_key = (ma, tex.name)
+            data_textures[blender_tex_key] = (get_blender_nodetexture_key(*blender_tex_key), b'DiffuseColor')
+
+            img = tex.image
+            vid_data = data_videos.setdefault(img, (get_blenderID_key(img), []))
+            vid_data[1].append(blender_tex_key)
+        '''
         # Note: with nodal shaders, we'll could be generating much more textures, but that's kind of unavoidable,
         #       given that textures actually do not exist anymore in material context in Blender...
         ma_wrap = node_shader_utils.PrincipledBSDFWrapper(ma, is_readonly=True)
@@ -2332,6 +2354,7 @@ def fbx_data_from_scene(scene, depsgraph, settings):
             img = tex.image
             vid_data = data_videos.setdefault(img, (get_blenderID_key(img), []))
             vid_data[1].append(blender_tex_key)
+        '''
 
     perfmon.step("FBX export prepare: Wrapping Animations...")
 
