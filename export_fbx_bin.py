@@ -1289,11 +1289,16 @@ def fbx_data_material_elements(root, ma, scene_data):
 
 
 def _gen_vid_path(img, scene_data):
-    msetts = scene_data.settings.media_settings
-    fname_rel = bpy_extras.io_utils.path_reference(img.filepath, msetts.base_src, msetts.base_dst, msetts.path_mode,
-                                                   msetts.subdir, msetts.copy_set, img.library)
-    fname_abs = os.path.normpath(os.path.abspath(os.path.join(msetts.base_dst, fname_rel)))
-    return fname_abs, fname_rel
+    if img.packed_file is not None:
+        fname_rel = "{}.{}".format(img.name, img.file_format.lower())
+        fname_abs = "{}.{}".format(img.name, img.file_format.lower())
+        return fname_abs, fname_rel
+    else:
+        msetts = scene_data.settings.media_settings
+        fname_rel = bpy_extras.io_utils.path_reference(img.filepath, msetts.base_src, msetts.base_dst, msetts.path_mode,
+                                                    msetts.subdir, msetts.copy_set, img.library)
+        fname_abs = os.path.normpath(os.path.abspath(os.path.join(msetts.base_dst, fname_rel)))
+        return fname_abs, fname_rel
 
 
 def fbx_data_texture_file_elements(root, blender_tex_key, scene_data):
