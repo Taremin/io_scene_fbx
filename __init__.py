@@ -19,8 +19,8 @@
 # <pep8 compliant>
 
 bl_info = {
-    "name": "FBX format",
-    "author": "Campbell Barton, Bastien Montagne, Jens Restemeier",
+    "name": "FBX format Taremin fork",
+    "author": "Campbell Barton, Bastien Montagne, Jens Restemeier, Taremin",
     "version": (4, 14, 2),
     "blender": (2, 80, 0),
     "location": "File > Import-Export",
@@ -575,11 +575,13 @@ def register():
 
 
 def unregister():
+    from pathlib import Path
     bpy.types.TOPBAR_MT_file_import.remove(menu_func_import)
     bpy.types.TOPBAR_MT_file_export.remove(menu_func_export)
 
     for cls in classes:
         bpy.utils.unregister_class(cls)
+    Path(__file__).touch()
 
 
 if __name__ == "__main__":
