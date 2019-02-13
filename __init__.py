@@ -38,6 +38,8 @@ if "bpy" in locals():
         importlib.reload(import_fbx)
     if "export_fbx_bin" in locals():
         importlib.reload(export_fbx_bin)
+    if "walk_shader_node" in locals():
+        importlib.reload(walk_shader_node)
     if "export_fbx" in locals():
         importlib.reload(export_fbx)
 
